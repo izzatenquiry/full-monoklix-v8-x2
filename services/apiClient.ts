@@ -28,21 +28,6 @@ export const getImagenProxyUrl = (): string => {
   return fallbackUrl;
 };
 
-const getSharedTokens = (): { token: string; createdAt: string }[] => {
-    const tokensJSON = sessionStorage.getItem('veoAuthTokens');
-    if (tokensJSON) {
-        try {
-            const parsed = JSON.parse(tokensJSON);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-                return parsed;
-            }
-        } catch (e) {
-            console.error("Could not parse VEO/Imagen tokens from session storage", e);
-        }
-    }
-    return [];
-};
-
 const getPersonalToken = (): { token: string; createdAt: string; } | null => {
     try {
         const userJson = localStorage.getItem('currentUser');
@@ -117,38 +102,20 @@ export const fetchWithTokenRotation = async (
   // --- End Queueing Logic ---
 
 
-  let tokensToTry: { token: string; createdAt: string }[] = [];
+  let tokensToTry: { token: string; createdAt: string }[];
 
   if (specificToken) {
-    tokensToTry = [{ token: specificToken, createdAt: 'N/A' }];
+    console.log(`[API Client] Using specific token provided for ${logContext}`);
+    tokensToTry = [{ token: specificToken, createdAt: 'specific' }];
   } else {
     const personalToken = getPersonalToken();
-    let sharedTokens = getSharedTokens();
-
-    // Shuffle the shared tokens to distribute the load
-    for (let i = sharedTokens.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [sharedTokens[i], sharedTokens[j]] = [sharedTokens[j], sharedTokens[i]];
+    if (personalToken) {
+        console.log(`[API Client] Using user's personal token for ${logContext}`);
+        tokensToTry = [personalToken];
+    } else {
+        console.error(`[API Client] Aborting ${logContext}: No personal auth token found for the current user.`);
+        throw new Error(`Personal Auth Token is required for ${logContext}, but none was found. Please re-login or check your account.`);
     }
-
-    if (sharedTokens.length === 0) {
-        console.log(`[API Client] No shared tokens in session for ${logContext}. Attempting re-fetch.`);
-        try {
-            const newTokens = await getVeoAuthTokens();
-            if (newTokens && newTokens.length > 0) {
-                sessionStorage.setItem('veoAuthTokens', JSON.stringify(newTokens));
-                sharedTokens = newTokens;
-                console.log(`[API Client] Successfully re-fetched ${newTokens.length} shared tokens.`);
-            }
-        } catch (e) {
-            console.error('[API Client] Failed to re-fetch auth tokens:', e);
-        }
-    }
-    
-    tokensToTry = [
-      ...(personalToken ? [personalToken] : []),
-      ...sharedTokens
-    ];
   }
 
   if (tokensToTry.length === 0) {
@@ -158,10 +125,12 @@ export const fetchWithTokenRotation = async (
 
   let lastError: any = null;
 
+  // This loop will now only run once for normal app operations.
+  // It is kept to preserve the logic for handling a single attempt and for test cases that pass a specificToken.
   for (let i = 0; i < tokensToTry.length; i++) {
     const currentToken = tokensToTry[i];
     const isPersonal = currentToken.createdAt === 'personal';
-    const tokenIdentifier = isPersonal ? 'Personal Token' : `Shared Token #${i - (getPersonalToken() ? 1 : 0) + 1}`;
+    const tokenIdentifier = isPersonal ? 'Personal Token' : 'Provided Token';
     
     if (onStatusUpdate) onStatusUpdate(`Attempting generation with ${tokenIdentifier}...`);
     console.log(`[API Client] Attempting ${logContext} with ${tokenIdentifier} (...${currentToken.token.slice(-6)})`);
@@ -199,13 +168,14 @@ export const fetchWithTokenRotation = async (
         eventBus.dispatch('personalTokenFailed');
       }
 
-      if (i < tokensToTry.length - 1) {
-        console.log(`[API Client] Retrying with next token...`);
+      // If it's a normal operation (not a specific token test), we don't retry, so we break here.
+      if (!specificToken) {
+        break;
       }
     }
   }
 
-  console.error(`[API Client] All ${tokensToTry.length} tokens failed for ${logContext}. Final error:`, lastError);
+  console.error(`[API Client] All attempts failed for ${logContext}. Final error:`, lastError);
   addLogEntry({ model: logContext, prompt: 'All available auth tokens failed.', output: `Final error: ${lastError.message}`, tokenCount: 0, status: 'Error', error: lastError.message });
   throw lastError;
 };
