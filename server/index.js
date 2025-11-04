@@ -65,7 +65,10 @@ async function getJson(response, req) {
 // 🧩 MIDDLEWARE
 // ===============================
 app.use(cors({
-  origin: '*',
+  origin: [
+    'https://dev.monoklix.com',
+    'https://monoklix.com'
+  ],
   credentials: true
 }));
 app.use(express.json({ limit: '50mb' }));

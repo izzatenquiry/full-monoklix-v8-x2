@@ -224,11 +224,6 @@ const App: React.FC = () => {
   const isAssigningTokenRef = useRef(false);
   const [autoAssignError, setAutoAssignError] = useState<string | null>(null);
   const [notification, setNotification] = useState<string | null>(null);
-
-  // --- AI Support Chat State ---
-  const [aiSupportMessages, setAiSupportMessages] = useState<Message[]>([]);
-  const [aiSupportChat, setAiSupportChat] = useState<Chat | null>(null);
-  const [isAiSupportLoading, setIsAiSupportLoading] = useState(false);
   
   const handleUserUpdate = useCallback((updatedUser: User) => {
     setCurrentUser(updatedUser);
@@ -401,26 +396,6 @@ const App: React.FC = () => {
         setJustLoggedIn(false); // Reset the flag
     }
   }, [justLoggedIn]);
-
-  // Effect to set up the AI chat session whenever the API key changes.
-  useEffect(() => {
-    const setupChatSession = async () => {
-        if (activeApiKey) {
-            try {
-                const systemInstruction = getSupportPrompt();
-                const session = await createChatSession(systemInstruction);
-                setAiSupportChat(session);
-            } catch (e) {
-                console.error("Failed to create chat session on key update:", e);
-                setAiSupportChat(null);
-            }
-        } else {
-            setAiSupportChat(null);
-            setAiSupportMessages([]);
-        }
-    };
-    setupChatSession();
-  }, [activeApiKey]);
   
    // Effect for user heartbeat (active status)
     useEffect(() => {
@@ -470,28 +445,33 @@ const App: React.FC = () => {
         };
     }, [currentUser?.id, currentUser?.status, handleLogout]);
 
-    const assignTokenProcess = useCallback(async (): Promise<boolean> => {
-        if (!currentUser || currentUser.personalAuthToken || isAssigningTokenRef.current || currentUser.status === 'trial') {
-            return false;
+    const assignTokenProcess = useCallback(async (): Promise<{ success: boolean; error: string | null; }> => {
+        if (!currentUser || isAssigningTokenRef.current) {
+            return { success: false, error: "Process is already running or user not available." };
         }
-    
+        
+        if (currentUser.status === 'trial') {
+            return { success: true, error: null }; // No token needed for trial users
+        }
+        
         isAssigningTokenRef.current = true;
-        setAutoAssignError(null);
-        console.log('User has no personal auth token. Starting auto-assignment process...');
-    
+        
+        console.log('Starting auto-assignment process...');
+
         const tokensJSON = sessionStorage.getItem('veoAuthTokens');
         if (!tokensJSON) {
-            console.log('No shared tokens available to test for auto-assignment.');
-            setAutoAssignError("Sistem tidak dapat mencari sebarang token sambungan yang tersedia. Sila hubungi admin.");
+            const errorMsg = "Sistem tidak dapat mencari sebarang token sambungan yang tersedia. Sila hubungi admin.";
+            console.log(errorMsg);
             isAssigningTokenRef.current = false;
-            return false;
+            return { success: false, error: errorMsg };
         }
-    
+        
         let tokenAssigned = false;
+        let finalError: string | null = "Semua slot sambungan sedang penuh. Sila cuba lagi sebentar lagi atau hubungi admin.";
+
         try {
             const sharedTokens: { token: string; createdAt: string }[] = JSON.parse(tokensJSON);
             
-            // Shuffle tokens to prevent "thundering herd" problem during testing
             for (let i = sharedTokens.length - 1; i > 0; i--) {
                 const j = Math.floor(Math.random() * (i + 1));
                 [sharedTokens[i], sharedTokens[j]] = [sharedTokens[j], sharedTokens[i]];
@@ -502,14 +482,15 @@ const App: React.FC = () => {
                 const results = await runComprehensiveTokenTest(tokenData.token);
                 const isImagenOk = results.find(r => r.service === 'Imagen')?.success;
                 const isVeoOk = results.find(r => r.service === 'Veo')?.success;
-    
+
                 if (isImagenOk && isVeoOk) {
                     console.log(`[Auto-Assign] Found a valid token: ...${tokenData.token.slice(-6)}. Assigning to user.`);
                     const assignResult = await assignPersonalTokenAndIncrementUsage(currentUser.id, tokenData.token);
-    
+
                     if (assignResult.success === false) {
                         console.warn(`[Auto-Assign] Could not assign token ...${tokenData.token.slice(-6)}: ${assignResult.message}. Trying next.`);
                         if (assignResult.message === 'DB_SCHEMA_MISSING_COLUMN_personal_auth_token' && currentUser.role === 'admin') {
+                            finalError = "Database schema is outdated.";
                             alert("Database schema is outdated.\n\nPlease go to your Supabase dashboard and run the following SQL command to add the required column:\n\nALTER TABLE public.users ADD COLUMN personal_auth_token TEXT;");
                             break;
                         }
@@ -517,23 +498,24 @@ const App: React.FC = () => {
                         handleUserUpdate(assignResult.user);
                         console.log('[Auto-Assign] Successfully assigned personal token and incremented usage count.');
                         tokenAssigned = true;
+                        finalError = null;
                         break;
                     }
                 }
             }
-    
+
             if (!tokenAssigned) {
                 console.log('[Auto-Assign] No valid shared tokens found after testing all available tokens.');
-                setAutoAssignError("Semua slot sambungan sedang penuh. Sila cuba lagi sebentar lagi atau hubungi admin.");
             }
-    
+
         } catch (error) {
             console.error('[Auto-Assign] An error occurred during the token assignment process:', error);
-            setAutoAssignError("An unexpected error occurred during assignment. Please try again.");
+            finalError = "An unexpected error occurred during assignment. Please try again.";
         } finally {
             isAssigningTokenRef.current = false;
         }
-        return tokenAssigned;
+        
+        return { success: tokenAssigned, error: finalError };
     }, [currentUser, handleUserUpdate]);
 
     useEffect(() => {
@@ -541,12 +523,12 @@ const App: React.FC = () => {
             if (currentUser && !currentUser.personalAuthToken && !isAssigningTokenRef.current) {
                 if (justLoggedIn) {
                     setShowAssignModal(true);
-                    const success = await assignTokenProcess();
-                    if (success) {
+                    const result = await assignTokenProcess();
+                    if (result.success) {
                         setShowAssignModal(false);
+                    } else if (result.error) {
+                        setAutoAssignError(result.error);
                     }
-                } else {
-                    await assignTokenProcess();
                 }
             }
         };
@@ -554,60 +536,21 @@ const App: React.FC = () => {
     }, [currentUser, justLoggedIn, assignTokenProcess]);
     
     const retryAssignment = useCallback(async () => {
-        const success = await assignTokenProcess();
-        if (success) {
+        setAutoAssignError(null);
+        const result = await assignTokenProcess();
+        if (result.success) {
             setShowAssignModal(false);
+        } else if (result.error) {
+            setAutoAssignError(result.error);
         }
     }, [assignTokenProcess]);
 
   const handleLoginSuccess = async (user: User) => {
     handleUserUpdate(user);
-    // Instead of setJustLoggedIn(true), trigger the new modal
     setShowServerSelectionModal(true);
     logActivity('login');
     sessionStorage.setItem('session_started_at', new Date().toISOString());
   };
-
-
-  const handleAiSupportSend = useCallback(async (prompt: string) => {
-    if (!prompt.trim() || !aiSupportChat || isAiSupportLoading) return;
-
-    const userMessage: Message = { role: 'user', text: prompt };
-    setAiSupportMessages((prev) => [...prev, userMessage]);
-    setIsAiSupportLoading(true);
-
-    try {
-        const stream = await streamChatResponse(aiSupportChat, prompt);
-        let modelResponse = '';
-        setAiSupportMessages((prev) => [...prev, { role: 'model', text: '...' }]);
-        
-        for await (const chunk of stream) {
-            modelResponse += chunk.text;
-            setAiSupportMessages((prev) => {
-                const newMessages = [...prev];
-                if(newMessages.length > 0) {
-                    newMessages[newMessages.length - 1].text = modelResponse;
-                }
-                return newMessages;
-            });
-        }
-        triggerUserWebhook({ type: 'text', prompt, result: modelResponse });
-    } catch (error) {
-        const errorMessageText = handleApiError(error);
-        const errorMessage: Message = { role: 'model', text: errorMessageText };
-        setAiSupportMessages((prev) => {
-            const newMessages = [...prev];
-            if (newMessages.length > 0 && newMessages[newMessages.length-1].role === 'model') {
-                newMessages[newMessages.length - 1] = errorMessage;
-            } else {
-                newMessages.push(errorMessage);
-            }
-            return newMessages;
-        });
-    } finally {
-        setIsAiSupportLoading(false);
-    }
-  }, [aiSupportChat, isAiSupportLoading]);
 
   const handleCreateVideoFromImage = (preset: VideoGenPreset) => {
     setVideoGenPreset(preset);
@@ -669,13 +612,10 @@ const App: React.FC = () => {
                     // This prop is now obsolete, but kept for compatibility.
                     tempApiKey={null}
                     onUserUpdate={handleUserUpdate} 
-                    aiSupportMessages={aiSupportMessages}
-                    isAiSupportLoading={isAiSupportLoading}
-                    // FIX: Changed onAiSupportSend to handleAiSupportSend to match the function name.
-                    onAiSupportSend={handleAiSupportSend}
                     // FIX: Pass language prop to SettingsView.
                     language={language}
                     veoTokenRefreshedAt={veoTokenRefreshedAt}
+                    assignTokenProcess={assignTokenProcess}
                  />;
       default:
         return <ECourseView currentUser={currentUser!} />;

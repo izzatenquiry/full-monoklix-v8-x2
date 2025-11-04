@@ -10,20 +10,17 @@ import { sendTestUserWebhook } from '../../services/webhookService';
 import AdminDashboardView from './AdminDashboardView';
 import ETutorialAdminView from './ETutorialAdminView';
 import Tabs, { type Tab } from '../common/Tabs';
-import ChatInterface from '../common/ChatInterface';
-import { getSupportPrompt } from '../../services/promptManager';
 import { runApiHealthCheck, type HealthCheckResult } from '../../services/geminiService';
 import { getTranslations } from '../../services/translations';
 import { getFormattedCacheStats, clearVideoCache } from '../../services/videoCacheService';
 import { runComprehensiveTokenTest, type TokenTestResult } from '../../services/imagenV3Service';
 
 // Define the types for the tabs in the settings view
-type SettingsTabId = 'profile' | 'api' | 'ai-support' | 'content-admin' | 'user-db';
+type SettingsTabId = 'profile' | 'api' | 'content-admin' | 'user-db';
 
 const TABS: Tab<SettingsTabId>[] = [
     { id: 'profile', label: 'User Profile' },
     { id: 'api', label: 'Integrations' },
-    { id: 'ai-support', label: 'AI Support' },
     { id: 'content-admin', label: 'Admin Content', adminOnly: true },
     { id: 'user-db', label: 'User Database', adminOnly: true },
 ];
@@ -37,11 +34,9 @@ interface SettingsViewProps {
   currentUser: User;
   tempApiKey: string | null;
   onUserUpdate: (user: User) => void;
-  aiSupportMessages: Message[];
-  isAiSupportLoading: boolean;
-  onAiSupportSend: (prompt: string) => Promise<void>;
   language: Language;
   veoTokenRefreshedAt: string | null;
+  assignTokenProcess: () => Promise<{ success: boolean; error: string | null; }>;
 }
 
 // --- PANELS ---
@@ -240,14 +235,62 @@ const CacheManagerPanel: React.FC = () => {
   );
 };
 
+const ClaimTokenModal: React.FC<{
+  status: 'searching' | 'success' | 'error';
+  error: string | null;
+  onRetry: () => void;
+  onClose: () => void;
+}> = ({ status, error, onRetry, onClose }) => (
+  <div className="fixed inset-0 bg-black/70 flex flex-col items-center justify-center z-50 p-4 animate-zoomIn" aria-modal="true" role="dialog">
+    <div className="bg-white dark:bg-neutral-900 rounded-lg shadow-xl p-8 text-center max-w-sm w-full">
+      {status === 'searching' && (
+        <>
+          <Spinner />
+          <h2 className="text-xl font-bold mt-4">Searching for New Token</h2>
+          <p className="text-neutral-500 dark:text-neutral-400 mt-2 text-sm">
+            Please wait while we find an available connection slot...
+          </p>
+        </>
+      )}
+      {status === 'success' && (
+        <>
+          <CheckCircleIcon className="w-12 h-12 text-green-500 mx-auto" />
+          <h2 className="text-xl font-bold mt-4">Token Claimed!</h2>
+          <p className="text-neutral-500 dark:text-neutral-400 mt-2 text-sm">
+            A new secure token has been assigned to your account.
+          </p>
+        </>
+      )}
+      {status === 'error' && (
+        <>
+          <AlertTriangleIcon className="w-12 h-12 text-red-500 mx-auto" />
+          <h2 className="text-xl font-bold mt-4">Assignment Failed</h2>
+          <p className="text-neutral-500 dark:text-neutral-400 mt-2 text-sm">
+            {error || 'An unknown error occurred.'}
+          </p>
+          <div className="mt-6 flex gap-4">
+            <button onClick={onClose} className="w-full bg-neutral-200 dark:bg-neutral-700 font-semibold py-2 px-4 rounded-lg hover:bg-neutral-300 dark:hover:bg-neutral-600 transition-colors">
+              Close
+            </button>
+            <button onClick={onRetry} className="w-full bg-primary-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-primary-700 transition-colors">
+              Try Again
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  </div>
+);
+
 interface ApiIntegrationsPanelProps {
   currentUser: User;
   onUserUpdate: (user: User) => void;
   language: Language;
   veoTokenRefreshedAt: string | null;
+  assignTokenProcess: () => Promise<{ success: boolean; error: string | null; }>;
 }
 
-const ApiIntegrationsPanel: React.FC<ApiIntegrationsPanelProps> = ({ currentUser, onUserUpdate, language, veoTokenRefreshedAt }) => {
+const ApiIntegrationsPanel: React.FC<ApiIntegrationsPanelProps> = ({ currentUser, onUserUpdate, language, veoTokenRefreshedAt, assignTokenProcess }) => {
     const [webhookUrl, setWebhookUrl] = useState(currentUser.webhookUrl || '');
     const [webhookStatus, setWebhookStatus] = useState<{ type: 'idle' | 'loading' | 'success' | 'error'; message: string }>({ type: 'idle', message: '' });
 
@@ -261,6 +304,33 @@ const ApiIntegrationsPanel: React.FC<ApiIntegrationsPanelProps> = ({ currentUser
     
     const [testStatus, setTestStatus] = useState<'idle' | 'testing'>('idle');
     const [testResults, setTestResults] = useState<TokenTestResult[] | null>(null);
+
+    const [claimStatus, setClaimStatus] = useState<'idle' | 'searching' | 'success' | 'error'>('idle');
+    const [claimError, setClaimError] = useState<string | null>(null);
+
+    const handleClaimNewToken = useCallback(async () => {
+        setClaimStatus('searching');
+        setClaimError(null);
+
+        const clearResult = await saveUserPersonalAuthToken(currentUser.id, null);
+        // FIX: Inverted conditional to check for the failure case first. This helps ensure TypeScript
+        // correctly narrows the discriminated union type for both the success and failure blocks.
+        if (clearResult.success === false) {
+            setClaimError(clearResult.message || 'Failed to clear previous token.');
+            setClaimStatus('error');
+        } else {
+            onUserUpdate(clearResult.user);
+            
+            const assignResult = await assignTokenProcess();
+            if (assignResult.success) {
+                setClaimStatus('success');
+                setTimeout(() => setClaimStatus('idle'), 2000);
+            } else {
+                setClaimError(assignResult.error || 'Failed to assign token.');
+                setClaimStatus('error');
+            }
+        }
+    }, [currentUser.id, onUserUpdate, assignTokenProcess]);
 
     const handleTestToken = useCallback(async () => {
         setTestStatus('testing');
@@ -287,12 +357,10 @@ const ApiIntegrationsPanel: React.FC<ApiIntegrationsPanelProps> = ({ currentUser
         }
     }, [veoTokenRefreshedAt]);
     
-    // Syncs the local state with the user's token from props.
-    // When the token changes, old test results are cleared, requiring a manual re-test.
     useEffect(() => {
         const tokenFromProp = currentUser.personalAuthToken || '';
-        setPersonalAuthToken(tokenFromProp); // Sync local state for the input field
-        setTestResults(null); // Clear previous test results
+        setPersonalAuthToken(tokenFromProp);
+        setTestResults(null);
     }, [currentUser.personalAuthToken]);
     
     const handleSaveWebhook = async () => {
@@ -353,8 +421,6 @@ const ApiIntegrationsPanel: React.FC<ApiIntegrationsPanelProps> = ({ currentUser
         setPersonalTokenSaveStatus('saving');
         const result = await saveUserPersonalAuthToken(currentUser.id, personalAuthToken.trim() || null);
 
-        // FIX: Inverted conditional to check for the failure case first. This helps ensure TypeScript 
-        // correctly narrows the discriminated union type for both the success and failure blocks.
         if (result.success === false) {
             setPersonalTokenSaveStatus('error');
             if (result.message === 'DB_SCHEMA_MISSING_COLUMN_personal_auth_token' && currentUser.role === 'admin') {
@@ -367,232 +433,201 @@ const ApiIntegrationsPanel: React.FC<ApiIntegrationsPanelProps> = ({ currentUser
         setTimeout(() => setPersonalTokenSaveStatus('idle'), 3000);
     };
 
-    const handleClearPersonalToken = async () => {
-        setPersonalTokenSaveStatus('saving');
-        const result = await saveUserPersonalAuthToken(currentUser.id, null);
-
-        if (result.success) {
-            onUserUpdate(result.user);
-            setPersonalAuthToken('');
-            setTestResults(null);
-            setPersonalTokenSaveStatus('saved');
-        } else {
-            setPersonalTokenSaveStatus('error');
-        }
-        setTimeout(() => setPersonalTokenSaveStatus('idle'), 3000);
-    };
-
     return (
-        <div className="bg-white dark:bg-neutral-900 p-6 rounded-lg shadow-sm space-y-8">
-            <div>
-                <h2 className="text-xl font-semibold mb-2">MONOklix API Key</h2>
-                <div className="p-4 bg-blue-50 dark:bg-blue-900/30 rounded-lg border border-blue-200 dark:border-blue-700 flex items-start gap-3">
-                    <InformationCircleIcon className="w-5 h-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
-                    <p className="text-sm text-blue-800 dark:text-blue-200">
-                        This platform uses a centralized, shared API key for all AI services. You do not need to provide your own key. The status of the shared key is shown below.
-                    </p>
-                </div>
-                <div className="mt-4 p-3 bg-neutral-100 dark:bg-neutral-800 rounded-lg flex justify-between items-center">
-                    <span className="font-semibold text-neutral-700 dark:text-neutral-200">Shared API Key Status:</span>
-                    {activeApiKey ? (
-                        <span className="flex items-center gap-2 font-semibold text-green-600 dark:text-green-400">
-                            <CheckCircleIcon className="w-5 h-5" />
-                            Connected
-                        </span>
-                    ) : (
-                         <span className="flex items-center gap-2 font-semibold text-red-500">
-                            <XIcon className="w-5 h-5" />
-                            Not Loaded
-                        </span>
-                    )}
-                </div>
-            </div>
-            
-            <div className="border-t border-neutral-200 dark:border-neutral-800 pt-8">
-                <h2 className="text-xl font-semibold mb-2">MONOklix Auth Token</h2>
-                <div className="relative">
-                    <input
-                        type={showPersonalToken ? 'text' : 'password'}
-                        value={personalAuthToken}
-                        onChange={(e) => {
-                            setPersonalAuthToken(e.target.value);
-                            setTestResults(null); // Reset test status on change
-                        }}
-                        placeholder="Paste your personal __SESSION token here"
-                        className="w-full bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg p-2 pr-10 focus:ring-2 focus:ring-primary-500"
-                    />
-                    <button onClick={() => setShowPersonalToken(!showPersonalToken)} className="absolute inset-y-0 right-0 px-3 flex items-center text-neutral-500">
-                        {showPersonalToken ? <EyeOffIcon className="w-5 h-5"/> : <EyeIcon className="w-5 h-5"/>}
-                    </button>
+        <>
+            {claimStatus !== 'idle' && (
+                <ClaimTokenModal
+                    status={claimStatus}
+                    error={claimError}
+                    onClose={() => setClaimStatus('idle')}
+                    onRetry={handleClaimNewToken}
+                />
+            )}
+            <div className="bg-white dark:bg-neutral-900 p-6 rounded-lg shadow-sm space-y-8">
+                <div>
+                    <h2 className="text-xl font-semibold mb-2">MONOklix API Key</h2>
+                    <div className="p-4 bg-blue-50 dark:bg-blue-900/30 rounded-lg border border-blue-200 dark:border-blue-700 flex items-start gap-3">
+                        <InformationCircleIcon className="w-5 h-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+                        <p className="text-sm text-blue-800 dark:text-blue-200">
+                            This platform uses a centralized, shared API key for all AI services. You do not need to provide your own key. The status of the shared key is shown below.
+                        </p>
+                    </div>
+                    <div className="mt-4 p-3 bg-neutral-100 dark:bg-neutral-800 rounded-lg flex justify-between items-center">
+                        <span className="font-semibold text-neutral-700 dark:text-neutral-200">Shared API Key Status:</span>
+                        {activeApiKey ? (
+                            <span className="flex items-center gap-2 font-semibold text-green-600 dark:text-green-400">
+                                <CheckCircleIcon className="w-5 h-5" />
+                                Connected
+                            </span>
+                        ) : (
+                             <span className="flex items-center gap-2 font-semibold text-red-500">
+                                <XIcon className="w-5 h-5" />
+                                Not Loaded
+                            </span>
+                        )}
+                    </div>
                 </div>
                 
-                {/* Token Status Feedback */}
-                <div className="mt-2 min-h-[24px]">
-                    {testStatus === 'testing' && <div className="flex items-center gap-2 text-sm text-neutral-500"><Spinner /> Testing token...</div>}
-                    {testResults && (
-                        <div className="space-y-2 mt-2">
-                            {testResults.map(result => (
-                                <div key={result.service} className={`flex items-start gap-2 text-sm p-2 rounded-md ${result.success ? 'bg-green-50 dark:bg-green-900/20' : 'bg-red-50 dark:bg-red-900/20'}`}>
-                                    {result.success ? <CheckCircleIcon className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5"/> : <XIcon className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5"/>}
-                                    <div>
-                                        <span className={`font-semibold ${result.success ? 'text-green-800 dark:text-green-200' : 'text-red-700 dark:text-red-300'}`}>{result.service} Service</span>
-                                        <p className={`text-xs ${result.success ? 'text-green-700 dark:text-green-300' : 'text-red-600 dark:text-red-400'}`}>{result.message}</p>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-
-                <div className="flex items-center gap-2 mt-2">
-                    <button onClick={handleSavePersonalToken} disabled={personalTokenSaveStatus === 'saving'} className="bg-primary-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-primary-700 w-24 flex justify-center">
-                        {personalTokenSaveStatus === 'saving' ? <Spinner/> : 'Save'}
-                    </button>
-                    <button onClick={handleTestToken} disabled={!personalAuthToken || testStatus === 'testing'} className="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 flex justify-center items-center gap-2 disabled:opacity-50">
-                         {testStatus === 'testing' ? <Spinner /> : <SparklesIcon className="w-4 h-4" />}
-                        Run Test
-                    </button>
-                    <button onClick={handleClearPersonalToken} disabled={personalTokenSaveStatus === 'saving'} className="bg-neutral-200 dark:bg-neutral-700 font-semibold py-2 px-4 rounded-lg hover:bg-neutral-300">
-                        Claim New!
-                    </button>
-                     {personalTokenSaveStatus === 'saved' && (
-                        <span className="flex items-center gap-2 text-sm text-green-600">
-                            <CheckCircleIcon className="w-5 h-5" />
-                            Updated!
-                        </span>
-                    )}
-                     {personalTokenSaveStatus === 'error' && (
-                        <span className="flex items-center gap-2 text-sm text-red-600">
-                            <XIcon className="w-5 h-5" />
-                            Save failed.
-                        </span>
-                    )}
-                </div>
-            </div>
-
-            <div className="border-t border-neutral-200 dark:border-neutral-800 pt-8">
-                 <div className="border-2 border-indigo-400 dark:border-indigo-600 rounded-lg p-4 bg-indigo-50 dark:bg-indigo-900/30">
-                    <h3 className="text-lg font-semibold text-indigo-800 dark:text-indigo-200 mb-2">
-                        Veo 3.0 Authorization
-                    </h3>
-                    <p className="text-xs text-indigo-600 dark:text-indigo-400 mb-3">
-                        This special token is required <strong>only for Veo 3.0 models</strong>. The app will automatically try the next token if the current one fails.
-                    </p>
-                    
-                    {veoTokens.length > 0 ? (
-                        <div className="mt-4 space-y-2">
-                            {veoTokens.map((tokenData, index) => (
-                                <div key={index} className={`p-3 rounded-md flex items-center gap-3 border ${index === 0 ? 'bg-green-100 dark:bg-green-900/30 border-green-200 dark:border-green-800' : 'bg-neutral-100 dark:bg-neutral-800/50 border-neutral-200 dark:border-neutral-700'}`}>
-                                    <CheckCircleIcon className={`w-5 h-5 flex-shrink-0 ${index === 0 ? 'text-green-600 dark:text-green-400' : 'text-neutral-500'}`} />
-                                    <div className="text-sm">
-                                        <p className={`font-semibold ${index === 0 ? 'text-green-800 dark:text-green-200' : 'text-neutral-800 dark:text-neutral-200'}`}>
-                                            {index === 0 ? 'Primary MONOklix Auth' : `Fallback Auth #${index}`}
-                                            <span className="font-mono text-xs ml-2">...{tokenData.token.slice(-6)}</span>
-                                        </p>
-                                        <p className={`text-xs ${index === 0 ? 'text-green-700 dark:text-green-300' : 'text-neutral-500 dark:text-neutral-400'}`}>
-                                            Created: {new Date(tokenData.createdAt).toLocaleString(locale)}
-                                        </p>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    ) : (
-                        <div className="mt-4 p-3 bg-yellow-100 dark:bg-yellow-900/30 rounded-md flex items-center gap-2 border border-yellow-200 dark:border-yellow-800">
-                            <AlertTriangleIcon className="w-5 h-5 text-yellow-600 dark:text-yellow-400 flex-shrink-0" />
-                            <p className="text-sm font-semibold text-yellow-800 dark:text-yellow-200">
-                                Authorization Token not found. Veo 3.0 models will fail.
-                            </p>
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            <div className="border-t border-neutral-200 dark:border-neutral-800 pt-8">
-                <h2 className="text-xl font-semibold flex items-center gap-2">
-                    <CheckCircleIcon className="w-6 h-6"/> API Health Check
-                </h2>
-                <p className="text-sm text-neutral-500 dark:text-neutral-400 my-4">
-                    Run a comprehensive check on all integrated AI services to ensure they are configured correctly and operational. This will make small API calls to each service.
-                </p>
-                <button 
-                    onClick={handleHealthCheck} 
-                    disabled={isCheckingHealth}
-                    className="bg-blue-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-blue-700 w-64 flex justify-center disabled:opacity-50"
-                >
-                    {isCheckingHealth ? <Spinner /> : 'Run Full System Check'}
-                </button>
-
-                {isCheckingHealth && <p className="text-sm mt-4 text-neutral-500">Running checks... this may take up to a minute.</p>}
-
-                {healthCheckResults && (
-                    <div className="mt-6 space-y-3">
-                        {healthCheckResults.map((result, index) => {
-                            const { border, icon, text } = getStatusClasses(result.status);
-                            const statusText = result.status === 'error' 
-                                ? 'Not Available' 
-                                : result.status.charAt(0).toUpperCase() + result.status.slice(1);
-
-                            return (
-                                <div key={index} className={`p-3 bg-neutral-100 dark:bg-neutral-800/50 rounded-lg border-l-4 ${border} animate-zoomIn`}>
-                                    <div className="flex items-center justify-between gap-4">
-                                        <div className="flex-1">
-                                            <p className="font-semibold text-neutral-800 dark:text-white">{result.service}</p>
-                                            <p className="text-xs font-mono text-neutral-500 break-all">{result.model}</p>
-                                        </div>
-                                        <div className="flex items-center gap-2 flex-shrink-0">
-                                            {icon}
-                                            <span className={`font-semibold text-sm ${text}`}>{statusText}</span>
-                                        </div>
-                                    </div>
-                                    <p className="text-xs text-neutral-600 dark:text-neutral-400 mt-2 whitespace-pre-wrap">{result.message}</p>
-                                </div>
-                            );
-                        })}
+                <div className="border-t border-neutral-200 dark:border-neutral-800 pt-8">
+                    <h2 className="text-xl font-semibold mb-2">MONOklix Auth Token</h2>
+                    <div className="relative">
+                        <input
+                            type={showPersonalToken ? 'text' : 'password'}
+                            value={personalAuthToken}
+                            onChange={(e) => {
+                                setPersonalAuthToken(e.target.value);
+                                setTestResults(null); // Reset test status on change
+                            }}
+                            placeholder="Paste your personal __SESSION token here"
+                            className="w-full bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg p-2 pr-10 focus:ring-2 focus:ring-primary-500"
+                        />
+                        <button onClick={() => setShowPersonalToken(!showPersonalToken)} className="absolute inset-y-0 right-0 px-3 flex items-center text-neutral-500">
+                            {showPersonalToken ? <EyeOffIcon className="w-5 h-5"/> : <EyeIcon className="w-5 h-5"/>}
+                        </button>
                     </div>
-                )}
-            </div>
-            
-            <div className="border-t border-neutral-200 dark:border-neutral-800 pt-8">
-                <h2 className="text-xl font-semibold flex items-center gap-2"><WebhookIcon className="w-6 h-6"/> Personal Webhook</h2>
-                <p className="text-sm text-neutral-500 dark:text-neutral-400 my-4">Automatically send generated content to an external URL (e.g., n8n).</p>
-                <input id="user-webhook-url" type="text" value={webhookUrl} onChange={(e) => setWebhookUrl(e.target.value)} placeholder="https://your-n8n-url.com/webhook/..." className="w-full bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg p-2 focus:ring-2 focus:ring-primary-500" />
-                <div className="flex items-center gap-2 mt-4">
-                    <button onClick={handleSaveWebhook} disabled={webhookStatus.type === 'loading'} className="bg-primary-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-primary-700 w-24 flex justify-center">
-                        {webhookStatus.type === 'loading' && webhookStatus.message.includes('Saving') ? <Spinner /> : 'Save'}
-                    </button>
-                    <button onClick={handleTestWebhook} disabled={!currentUser.webhookUrl || webhookStatus.type === 'loading'} className="bg-neutral-200 dark:bg-neutral-700 font-semibold py-2 px-4 rounded-lg hover:bg-neutral-300 disabled:opacity-50 w-40 flex justify-center">
-                        {webhookStatus.type === 'loading' && webhookStatus.message.includes('Sending') ? <Spinner /> : 'Test Webhook'}
-                    </button>
-                </div>
-                {webhookStatus.message && <p className={`text-sm mt-2 ${webhookStatus.type === 'success' ? 'text-green-600' : 'text-red-500'}`}>{webhookStatus.message}</p>}
-            </div>
-        </div>
-    );
-};
+                    
+                    {/* Token Status Feedback */}
+                    <div className="mt-2 min-h-[24px]">
+                        {testStatus === 'testing' && <div className="flex items-center gap-2 text-sm text-neutral-500"><Spinner /> Testing token...</div>}
+                        {testResults && (
+                            <div className="space-y-2 mt-2">
+                                {testResults.map(result => (
+                                    <div key={result.service} className={`flex items-start gap-2 text-sm p-2 rounded-md ${result.success ? 'bg-green-50 dark:bg-green-900/20' : 'bg-red-50 dark:bg-red-900/20'}`}>
+                                        {result.success ? <CheckCircleIcon className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5"/> : <XIcon className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5"/>}
+                                        <div>
+                                            <span className={`font-semibold ${result.success ? 'text-green-800 dark:text-green-200' : 'text-red-700 dark:text-red-300'}`}>{result.service} Service</span>
+                                            <p className={`text-xs ${result.success ? 'text-green-700 dark:text-green-300' : 'text-red-600 dark:text-red-400'}`}>{result.message}</p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
 
-const AiSupportPanel: React.FC<{
-    messages: Message[];
-    isLoading: boolean;
-    onSendMessage: (prompt: string) => Promise<void>;
-}> = ({ messages, isLoading, onSendMessage }) => {
-    const systemInstruction = getSupportPrompt();
-  
-    return (
-      <div className="bg-white dark:bg-neutral-900 p-6 rounded-lg shadow-sm">
-          <h2 className="text-xl font-semibold mb-2 flex items-center gap-2"><ChatIcon className="w-6 h-6"/>AI Support</h2>
-          <p className="text-sm text-neutral-500 dark:text-neutral-400 mb-6">
-              Have a question or need help? Ask here.
-          </p>
-          <div className="h-[60vh] flex flex-col">
-              <ChatInterface
-                  systemInstruction={systemInstruction}
-                  placeholder="How can I help you today?"
-                  messages={messages}
-                  isLoading={isLoading}
-                  onSendMessage={onSendMessage}
-              />
-          </div>
-      </div>
+                    <div className="flex items-center gap-2 mt-2">
+                        <button onClick={handleSavePersonalToken} disabled={personalTokenSaveStatus === 'saving'} className="bg-primary-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-primary-700 w-24 flex justify-center">
+                            {personalTokenSaveStatus === 'saving' ? <Spinner/> : 'Save'}
+                        </button>
+                        <button onClick={handleTestToken} disabled={!personalAuthToken || testStatus === 'testing'} className="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 flex justify-center items-center gap-2 disabled:opacity-50">
+                             {testStatus === 'testing' ? <Spinner /> : <SparklesIcon className="w-4 h-4" />}
+                            Run Test
+                        </button>
+                        <button onClick={handleClaimNewToken} disabled={personalTokenSaveStatus === 'saving' || claimStatus !== 'idle'} className="bg-neutral-200 dark:bg-neutral-700 font-semibold py-2 px-4 rounded-lg hover:bg-neutral-300 dark:hover:bg-neutral-600 transition-colors">
+                            Claim New!
+                        </button>
+                         {personalTokenSaveStatus === 'saved' && (
+                            <span className="flex items-center gap-2 text-sm text-green-600">
+                                <CheckCircleIcon className="w-5 h-5" />
+                                Updated!
+                            </span>
+                        )}
+                         {personalTokenSaveStatus === 'error' && (
+                            <span className="flex items-center gap-2 text-sm text-red-600">
+                                <XIcon className="w-5 h-5" />
+                                Save failed.
+                            </span>
+                        )}
+                    </div>
+                </div>
+
+                <div className="border-t border-neutral-200 dark:border-neutral-800 pt-8">
+                     <div className="border-2 border-indigo-400 dark:border-indigo-600 rounded-lg p-4 bg-indigo-50 dark:bg-indigo-900/30">
+                        <h3 className="text-lg font-semibold text-indigo-800 dark:text-indigo-200 mb-2">
+                            Veo 3.0 Authorization
+                        </h3>
+                        <p className="text-xs text-indigo-600 dark:text-indigo-400 mb-3">
+                            This special token is required <strong>only for Veo 3.0 models</strong>. The app will automatically try the next token if the current one fails.
+                        </p>
+                        
+                        {veoTokens.length > 0 ? (
+                            <div className="mt-4 space-y-2">
+                                {veoTokens.map((tokenData, index) => (
+                                    <div key={index} className={`p-3 rounded-md flex items-center gap-3 border ${index === 0 ? 'bg-green-100 dark:bg-green-900/30 border-green-200 dark:border-green-800' : 'bg-neutral-100 dark:bg-neutral-800/50 border-neutral-200 dark:border-neutral-700'}`}>
+                                        <CheckCircleIcon className={`w-5 h-5 flex-shrink-0 ${index === 0 ? 'text-green-600 dark:text-green-400' : 'text-neutral-500'}`} />
+                                        <div className="text-sm">
+                                            <p className={`font-semibold ${index === 0 ? 'text-green-800 dark:text-green-200' : 'text-neutral-800 dark:text-neutral-200'}`}>
+                                                {index === 0 ? 'Primary MONOklix Auth' : `Fallback Auth #${index}`}
+                                                <span className="font-mono text-xs ml-2">...{tokenData.token.slice(-6)}</span>
+                                            </p>
+                                            <p className={`text-xs ${index === 0 ? 'text-green-700 dark:text-green-300' : 'text-neutral-500 dark:text-neutral-400'}`}>
+                                                Created: {new Date(tokenData.createdAt).toLocaleString(locale)}
+                                            </p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="mt-4 p-3 bg-yellow-100 dark:bg-yellow-900/30 rounded-md flex items-center gap-2 border border-yellow-200 dark:border-yellow-800">
+                                <AlertTriangleIcon className="w-5 h-5 text-yellow-600 dark:text-yellow-400 flex-shrink-0" />
+                                <p className="text-sm font-semibold text-yellow-800 dark:text-yellow-200">
+                                    Authorization Token not found. Veo 3.0 models will fail.
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                <div className="border-t border-neutral-200 dark:border-neutral-800 pt-8">
+                    <h2 className="text-xl font-semibold flex items-center gap-2">
+                        <CheckCircleIcon className="w-6 h-6"/> API Health Check
+                    </h2>
+                    <p className="text-sm text-neutral-500 dark:text-neutral-400 my-4">
+                        Run a comprehensive check on all integrated AI services to ensure they are configured correctly and operational. This will make small API calls to each service.
+                    </p>
+                    <button 
+                        onClick={handleHealthCheck} 
+                        disabled={isCheckingHealth}
+                        className="bg-blue-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-blue-700 w-64 flex justify-center disabled:opacity-50"
+                    >
+                        {isCheckingHealth ? <Spinner /> : 'Run Full System Check'}
+                    </button>
+
+                    {isCheckingHealth && <p className="text-sm mt-4 text-neutral-500">Running checks... this may take up to a minute.</p>}
+
+                    {healthCheckResults && (
+                        <div className="mt-6 space-y-3">
+                            {healthCheckResults.map((result, index) => {
+                                const { border, icon, text } = getStatusClasses(result.status);
+                                const statusText = result.status === 'error' 
+                                    ? 'Not Available' 
+                                    : result.status.charAt(0).toUpperCase() + result.status.slice(1);
+
+                                return (
+                                    <div key={index} className={`p-3 bg-neutral-100 dark:bg-neutral-800/50 rounded-lg border-l-4 ${border} animate-zoomIn`}>
+                                        <div className="flex items-center justify-between gap-4">
+                                            <div className="flex-1">
+                                                <p className="font-semibold text-neutral-800 dark:text-white">{result.service}</p>
+                                                <p className="text-xs font-mono text-neutral-500 break-all">{result.model}</p>
+                                            </div>
+                                            <div className="flex items-center gap-2 flex-shrink-0">
+                                                {icon}
+                                                <span className={`font-semibold text-sm ${text}`}>{statusText}</span>
+                                            </div>
+                                        </div>
+                                        <p className="text-xs text-neutral-600 dark:text-neutral-400 mt-2 whitespace-pre-wrap">{result.message}</p>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+                
+                <div className="border-t border-neutral-200 dark:border-neutral-800 pt-8">
+                    <h2 className="text-xl font-semibold flex items-center gap-2"><WebhookIcon className="w-6 h-6"/> Personal Webhook</h2>
+                    <p className="text-sm text-neutral-500 dark:text-neutral-400 my-4">Automatically send generated content to an external URL (e.g., n8n).</p>
+                    <input id="user-webhook-url" type="text" value={webhookUrl} onChange={(e) => setWebhookUrl(e.target.value)} placeholder="https://your-n8n-url.com/webhook/..." className="w-full bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg p-2 focus:ring-2 focus:ring-primary-500" />
+                    <div className="flex items-center gap-2 mt-4">
+                        <button onClick={handleSaveWebhook} disabled={webhookStatus.type === 'loading'} className="bg-primary-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-primary-700 w-24 flex justify-center">
+                            {webhookStatus.type === 'loading' && webhookStatus.message.includes('Saving') ? <Spinner /> : 'Save'}
+                        </button>
+                        <button onClick={handleTestWebhook} disabled={!currentUser.webhookUrl || webhookStatus.type === 'loading'} className="bg-neutral-200 dark:bg-neutral-700 font-semibold py-2 px-4 rounded-lg hover:bg-neutral-300 disabled:opacity-50 w-40 flex justify-center">
+                            {webhookStatus.type === 'loading' && webhookStatus.message.includes('Sending') ? <Spinner /> : 'Test Webhook'}
+                        </button>
+                    </div>
+                    {webhookStatus.message && <p className={`text-sm mt-2 ${webhookStatus.type === 'success' ? 'text-green-600' : 'text-red-500'}`}>{webhookStatus.message}</p>}
+                </div>
+            </div>
+        </>
     );
 };
 
@@ -617,12 +652,8 @@ const SettingsView: React.FC<SettingsViewProps> = (props) => {
                             onUserUpdate={props.onUserUpdate} 
                             language={language}
                             veoTokenRefreshedAt={props.veoTokenRefreshedAt}
+                            assignTokenProcess={props.assignTokenProcess}
                         />;
-            case 'ai-support': return <AiSupportPanel 
-                messages={props.aiSupportMessages}
-                isLoading={props.isAiSupportLoading}
-                onSendMessage={props.onAiSupportSend}
-            />;
             case 'content-admin': return <ETutorialAdminView />;
             case 'user-db': return <AdminDashboardView />;
             default: return <ProfilePanel {...props} />;

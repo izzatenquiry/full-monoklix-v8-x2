@@ -10,7 +10,10 @@ const VEO_API_BASE = 'https://aisandbox-pa.googleapis.com/v1';
 // 🧩 MIDDLEWARE
 // ===============================
 app.use(cors({
-  origin: '*',
+  origin: [
+    'https://dev.monoklix.com',
+    'https://monoklix.com'
+  ],
   credentials: true
 }));
 app.use(express.json({ limit: '50mb' }));
