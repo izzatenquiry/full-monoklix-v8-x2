@@ -118,7 +118,6 @@ export const getProductPhotoPrompt = (details: {
     
     `**Final Requirements:**`,
     `- The result must be clean, aesthetic, and suitable for e-commerce listings or social media.`,
-    `- The output image must have a 3:4 aspect ratio.`,
     `- CRITICAL: The final image must be purely visual. Do NOT add text, watermarks, or logos.`
   ];
 
@@ -353,7 +352,6 @@ The image must naturally feature the provided product image.
 
 **Final Requirements:**
 - The result must be a high-quality, authentic-looking, and engaging image for affiliate marketing.
-- Output must have a 3:4 aspect ratio.
 - CRITICAL: The image must be purely visual. Do NOT add text, watermarks, or logos.
 `;
   }

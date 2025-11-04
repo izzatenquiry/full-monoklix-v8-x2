@@ -275,7 +275,7 @@ const ImageGenerationView: React.FC<ImageGenerationViewProps> = ({ onCreateVideo
   const leftPanel = (
     <>
       <div>
-        <h1 className="text-2xl font-bold sm:text-3xl">{isEditing ? 'AI Image Editor' : 'AI Image Generator'}</h1>
+        <h1 className="text-2xl font-bold sm:text-3xl">{isEditing ? 'AI Image Editor' : 'AI Image Generation'}</h1>
         <p className="text-neutral-500 dark:text-neutral-400 mt-1">{isEditing ? 'Edit your image with simple text commands.' : 'Create stunning images from text descriptions.'}</p>
       </div>
       

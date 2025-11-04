@@ -115,6 +115,7 @@ const TiktokAffiliateView: React.FC<TiktokAffiliateViewProps> = ({ onReEdit, onC
     const [creativityLevel, setCreativityLevel] = useState(5);
     const [customPrompt, setCustomPrompt] = useState('');
     const [numberOfImages, setNumberOfImages] = useState(1);
+    const [aspectRatio, setAspectRatio] = useState<'1:1' | '9:16' | '16:9' | '3:4' | '4:3'>('9:16');
     const [productImageUploadKey, setProductImageUploadKey] = useState(Date.now());
     const [faceImageUploadKey, setFaceImageUploadKey] = useState(Date.now() + 1);
     const [progress, setProgress] = useState(0);
@@ -140,6 +141,7 @@ const TiktokAffiliateView: React.FC<TiktokAffiliateViewProps> = ({ onReEdit, onC
                 if (state.creativityLevel) setCreativityLevel(state.creativityLevel);
                 if (state.customPrompt) setCustomPrompt(state.customPrompt);
                 if (state.numberOfImages) setNumberOfImages(state.numberOfImages);
+                if (state.aspectRatio) setAspectRatio(state.aspectRatio);
             }
         } catch (e) { console.error("Failed to load state from session storage", e); }
     }, []);
@@ -148,14 +150,14 @@ const TiktokAffiliateView: React.FC<TiktokAffiliateViewProps> = ({ onReEdit, onC
         try {
             const stateToSave = {
                 gender, modelFace, lighting, camera, pose,
-                vibe, style, composition, lensType, filmSim, creativityLevel, customPrompt, numberOfImages
+                vibe, style, composition, lensType, filmSim, creativityLevel, customPrompt, numberOfImages, aspectRatio
             };
             sessionStorage.setItem(SESSION_KEY, JSON.stringify(stateToSave));
         } catch (e) { console.error("Failed to save state to session storage", e); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [
         gender, modelFace, lighting, camera, pose,
-        vibe, style, composition, lensType, filmSim, creativityLevel, customPrompt, numberOfImages
+        vibe, style, composition, lensType, filmSim, creativityLevel, customPrompt, numberOfImages, aspectRatio
     ]);
 
     const generateOneImage = useCallback(async (index: number) => {
@@ -181,7 +183,7 @@ const TiktokAffiliateView: React.FC<TiktokAffiliateViewProps> = ({ onReEdit, onC
             const result = await editOrComposeWithImagen({
                 prompt,
                 images: imagesToCompose,
-                config: { aspectRatio: '1:1' }
+                config: { aspectRatio }
             });
             const imageBase64 = result.imagePanels[0]?.generatedImages[0]?.encodedImage;
 
@@ -204,7 +206,7 @@ const TiktokAffiliateView: React.FC<TiktokAffiliateViewProps> = ({ onReEdit, onC
                 return newImages;
             });
         }
-    }, [productImage, faceImage, gender, modelFace, lighting, camera, pose, vibe, creativityLevel, customPrompt, style, composition, lensType, filmSim]);
+    }, [productImage, faceImage, gender, modelFace, lighting, camera, pose, vibe, creativityLevel, customPrompt, style, composition, lensType, filmSim, aspectRatio]);
     
     const handleGenerate = useCallback(async () => {
         if (!productImage) {
@@ -252,6 +254,7 @@ const TiktokAffiliateView: React.FC<TiktokAffiliateViewProps> = ({ onReEdit, onC
         setCreativityLevel(5);
         setCustomPrompt('');
         setNumberOfImages(1);
+        setAspectRatio('9:16');
         setProductImageUploadKey(Date.now());
         setFaceImageUploadKey(Date.now() + 1);
         setProgress(0);
@@ -302,12 +305,27 @@ const TiktokAffiliateView: React.FC<TiktokAffiliateViewProps> = ({ onReEdit, onC
           </Section>
           
           <Section title={T.aiSettings}>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+            <div className="grid grid-cols-1 gap-4">
                 <div>
                     <label htmlFor="creativity-slider" className="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-1">{`${T.creativityLevel} (${creativityLevel})`}</label>
                     <input id="creativity-slider" type="range" min="0" max="10" step="1" value={creativityLevel} onChange={(e) => setCreativityLevel(Number(e.target.value))} className="w-full h-2 bg-neutral-200 dark:bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-primary-500" />
                 </div>
-                <div><label htmlFor="num-images-select" className="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-1">{T.numberOfImages}</label><SelectControl id="num-images-select" value={String(numberOfImages)} onChange={(val) => setNumberOfImages(Number(val))} options={[1, 2, 3, 4, 5]} /></div>
+                <div className="grid grid-cols-2 gap-4">
+                    <div>
+                        <label htmlFor="num-images-select" className="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-1">{T.numberOfImages}</label>
+                        <SelectControl id="num-images-select" value={String(numberOfImages)} onChange={(val) => setNumberOfImages(Number(val))} options={[1, 2, 3, 4, 5]} />
+                    </div>
+                    <div>
+                        <label htmlFor="aspect-ratio-select" className="block text-sm font-medium text-gray-600 dark:text-gray-400 mb-1">{T.aspectRatio}</label>
+                        <select id="aspect-ratio-select" value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value as any)} className="w-full bg-white dark:bg-neutral-800 border border-neutral-300 dark:border-neutral-700 rounded-lg p-3 text-neutral-800 dark:text-neutral-300 focus:ring-2 focus:ring-primary-500 focus:outline-none transition">
+                            <option value="9:16">Portrait (9:16)</option>
+                            <option value="1:1">Square (1:1)</option>
+                            <option value="16:9">Landscape (16:9)</option>
+                            <option value="3:4">Portrait (3:4)</option>
+                            <option value="4:3">Landscape (4:3)</option>
+                        </select>
+                    </div>
+                </div>
             </div>
           </Section>
 

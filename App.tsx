@@ -517,29 +517,13 @@ const App: React.FC = () => {
         
         return { success: tokenAssigned, error: finalError };
     }, [currentUser, handleUserUpdate]);
-
-    useEffect(() => {
-        const runAssignment = async () => {
-            if (currentUser && !currentUser.personalAuthToken && !isAssigningTokenRef.current) {
-                if (justLoggedIn) {
-                    setShowAssignModal(true);
-                    const result = await assignTokenProcess();
-                    if (result.success) {
-                        setShowAssignModal(false);
-                    } else if (result.error) {
-                        setAutoAssignError(result.error);
-                    }
-                }
-            }
-        };
-        runAssignment();
-    }, [currentUser, justLoggedIn, assignTokenProcess]);
     
     const retryAssignment = useCallback(async () => {
         setAutoAssignError(null);
         const result = await assignTokenProcess();
         if (result.success) {
             setShowAssignModal(false);
+            setJustLoggedIn(true);
         } else if (result.error) {
             setAutoAssignError(result.error);
         }
@@ -750,12 +734,27 @@ To unlock this and all other advanced features, please upgrade to the full versi
       {showServerSelectionModal && (
         <ServerSelectionModal
           currentUser={currentUser!}
-          onSelect={(serverUrl) => {
+          onSelect={async (serverUrl) => {
             console.log(`[Server Selection] User selected proxy server: ${serverUrl}`);
             sessionStorage.setItem('selectedProxyServer', serverUrl);
             updateUserProxyServer(currentUser!.id, serverUrl); // Fire-and-forget update
             setShowServerSelectionModal(false);
-            setJustLoggedIn(true); // Now trigger the welcome/token assignment
+            
+            if (currentUser && !currentUser.personalAuthToken) {
+                // No token: show modal, run process, then trigger welcome animation.
+                setShowAssignModal(true);
+                setAutoAssignError(null);
+                const result = await assignTokenProcess();
+                if (result.success) {
+                    setShowAssignModal(false);
+                    setJustLoggedIn(true); 
+                } else {
+                    setAutoAssignError(result.error);
+                }
+            } else {
+                // Has token: just trigger welcome animation.
+                setJustLoggedIn(true);
+            }
           }}
         />
       )}
@@ -791,6 +790,8 @@ To unlock this and all other advanced features, please upgrade to the full versi
                 activeApiKey={activeApiKey} 
                 veoTokenRefreshedAt={veoTokenRefreshedAt} 
                 currentUser={currentUser}
+                assignTokenProcess={assignTokenProcess}
+                onUserUpdate={handleUserUpdate}
               />
           </div>
         </header>
