@@ -19,7 +19,6 @@ const getProxyBaseUrl = (): string => {
   const server = getVeoProxyUrl();
   return `${server}/api/veo`;
 };
-const PROXY_BASE_URL = getProxyBaseUrl();
 
 export const generateVideoWithVeo3 = async (
     request: VideoGenerationRequest,
@@ -69,7 +68,7 @@ export const generateVideoWithVeo3 = async (
 
   console.log('🎬 [VEO Service] Constructed T2V/I2V request body. Sending to API client.');
   const endpoint = isImageToVideo ? '/generate-i2v' : '/generate-t2v';
-  const url = `${PROXY_BASE_URL}${endpoint}`;
+  const url = `${getProxyBaseUrl()}${endpoint}`;
   
   // Use fetchWithTokenRotation which now handles queuing
   const { data, successfulToken } = await fetchWithTokenRotation(url, requestBody, isImageToVideo ? 'VEO I2V GENERATE' : 'VEO T2V GENERATE', config.authToken, onStatusUpdate);
@@ -79,7 +78,7 @@ export const generateVideoWithVeo3 = async (
 
 export const checkVideoStatus = async (operations: any[], token: string, onStatusUpdate?: (status: string) => void) => {
   console.log(`🔍 [VEO Service] Checking status for ${operations.length} operations...`);
-  const url = `${PROXY_BASE_URL}/status`;
+  const url = `${getProxyBaseUrl()}/status`;
   const payload = { operations };
 
   // Use a direct fetch with the provided token, bypassing rotation.
@@ -124,7 +123,7 @@ export const uploadImageForVeo3 = async (
     }
   };
 
-  const url = `${PROXY_BASE_URL}/upload`;
+  const url = `${getProxyBaseUrl()}/upload`;
   const { data, successfulToken } = await fetchWithTokenRotation(url, requestBody, 'VEO UPLOAD', undefined, onStatusUpdate);
   const mediaId = data.mediaGenerationId?.mediaGenerationId || data.mediaId;
   

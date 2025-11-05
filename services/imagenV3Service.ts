@@ -36,7 +36,6 @@ const getProxyBaseUrl = (): string => {
   const server = getImagenProxyUrl();
   return `${server}/api/imagen`;
 };
-const PROXY_BASE_URL = getProxyBaseUrl();
 
 export const uploadImageForImagen = async (base64Image: string, mimeType: string, authToken?: string, onStatusUpdate?: (status: string) => void): Promise<string> => {
   console.log(`📤 [Imagen Service] Preparing to upload image for Imagen. MimeType: ${mimeType}`);
@@ -50,7 +49,7 @@ export const uploadImageForImagen = async (base64Image: string, mimeType: string
     }
   };
 
-  const url = `${PROXY_BASE_URL}/upload`;
+  const url = `${getProxyBaseUrl()}/upload`;
   const { data } = await fetchWithTokenRotation(url, requestBody, 'IMAGEN UPLOAD', authToken, onStatusUpdate);
 
   const mediaId = 
@@ -85,7 +84,7 @@ export const generateImageWithImagen = async (request: ImageGenerationRequest, o
       seed: config.seed || Math.floor(Math.random() * 2147483647),
   };
 
-  const url = `${PROXY_BASE_URL}/generate`;
+  const url = `${getProxyBaseUrl()}/generate`;
   
   console.log(`🎨 [Imagen Service] Sending T2I request to API client.`);
   const { data: result } = await fetchWithTokenRotation(url, requestBody, 'IMAGEN GENERATE', config.authToken, onStatusUpdate);
@@ -115,7 +114,7 @@ export const runImageRecipe = async (request: {
         recipeMediaInputs
     };
 
-    const url = `${PROXY_BASE_URL}/run-recipe`;
+    const url = `${getProxyBaseUrl()}/run-recipe`;
     const { data: result } = await fetchWithTokenRotation(url, requestBody, 'IMAGEN RECIPE', config.authToken, onStatusUpdate);
     console.log(`✏️ [Imagen Service] Received recipe result with ${result.imagePanels?.length || 0} panels.`);
     return result;
