@@ -261,6 +261,8 @@ export interface Database {
           token: string;
           created_at: string;
           total_user: number | null;
+          // FIX: Add status column to match the view's actual columns for filtering.
+          status: string | null;
         };
         Insert: {};
         Update: {};
@@ -282,6 +284,13 @@ export interface Database {
           token_to_check: string;
         };
         Returns: boolean;
+      };
+      // FIX: Add missing RPC function definition for 'mark_token_expired'.
+      mark_token_expired: {
+        Args: {
+          token_to_mark: string;
+        };
+        Returns: void;
       };
     }
     Enums: {

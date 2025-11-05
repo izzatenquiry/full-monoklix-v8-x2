@@ -521,8 +521,7 @@ export const getVeoAuthTokens = async (): Promise<{ token: string; createdAt: st
         .from('token_new_active')
         .select('token, created_at')
         .lt('total_user', 10) // Only fetch tokens with less than 10 users.
-        // FIX: Add filter to not fetch tokens marked as expired.
-        .not('status', 'eq', 'expired') // Do not fetch tokens that are known to be bad
+        .neq('status', 'expired') // Do not fetch tokens that are known to be bad
         .order('created_at', { ascending: false })
         .limit(30);
 
@@ -829,7 +828,6 @@ export const updateUserProxyServer = async (userId: string, serverUrl: string | 
     return true;
 };
 
-// FIX: Add missing function to mark expired tokens, which is used in App.tsx.
 /**
  * Marks a token as expired in the database. This is a fire-and-forget operation.
  * @param token The token string to mark as expired.

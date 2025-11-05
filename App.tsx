@@ -11,8 +11,8 @@ import LoginPage from './LoginPage';
 import GalleryView from './components/views/GalleryView';
 import WelcomeAnimation from './components/WelcomeAnimation';
 import LibraryView from './components/views/LibraryView';
-import { MenuIcon, LogoIcon, XIcon, SunIcon, MoonIcon, CheckCircleIcon, AlertTriangleIcon, PartyPopperIcon, RefreshCwIcon, UsersIcon, ServerIcon } from './components/Icons';
-import { signOutUser, logActivity, getVeoAuthTokens, getSharedMasterApiKey, updateUserLastSeen, assignPersonalTokenAndIncrementUsage, saveUserPersonalAuthToken, getServerUsageCounts, updateUserProxyServer } from './services/userService';
+import { MenuIcon, LogoIcon, XIcon, SunIcon, MoonIcon, CheckCircleIcon, AlertTriangleIcon, PartyPopperIcon, RefreshCwIcon, UsersIcon, ServerIcon, ShieldCheckIcon } from './components/Icons';
+import { signOutUser, logActivity, getVeoAuthTokens, getSharedMasterApiKey, updateUserLastSeen, assignPersonalTokenAndIncrementUsage, saveUserPersonalAuthToken, getServerUsageCounts, updateUserProxyServer, updateTokenStatusToExpired } from './services/userService';
 import { createChatSession, streamChatResponse } from './services/geminiService';
 import Spinner from './components/common/Spinner';
 import { loadData, saveData } from './services/indexedDBService';
@@ -78,32 +78,59 @@ const NotificationBanner: React.FC<{ message: string; onDismiss: () => void }> =
     </div>
 );
 
-const AssigningTokenModal: React.FC<{ error: string | null; onRetry: () => void }> = ({ error, onRetry }) => (
-  <div className="fixed inset-0 bg-black/70 flex flex-col items-center justify-center z-50 p-4 animate-zoomIn" aria-modal="true" role="dialog">
-    <div className="bg-white dark:bg-neutral-900 rounded-lg shadow-xl p-8 text-center max-w-sm w-full">
-      {error ? (
-        <>
-            <AlertTriangleIcon className="w-12 h-12 text-red-500 mx-auto" />
-            <h2 className="text-xl font-bold mt-4 text-neutral-800 dark:text-neutral-100">Assignment Failed</h2>
-            <p className="text-neutral-500 dark:text-neutral-400 mt-2 text-sm">
-                {error}
-            </p>
-            <button onClick={onRetry} className="mt-6 w-full bg-primary-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-primary-700 transition-colors">
-                Try Again
-            </button>
-        </>
-      ) : (
-        <>
-            <Spinner />
-            <h2 className="text-xl font-bold mt-4 text-neutral-800 dark:text-neutral-100">Preparing Your Account</h2>
-            <p className="text-neutral-500 dark:text-neutral-400 mt-2 text-sm">
-                We're assigning a secure token for your first session. This may take a moment, please wait.
-            </p>
-        </>
-      )}
-    </div>
-  </div>
-);
+type AssigningStatus = 'scanning' | 'assigning' | 'success' | 'error';
+interface AssigningTokenModalProps {
+  status: AssigningStatus;
+  error: string | null;
+  scanProgress: { current: number; total: number };
+  onRetry: () => void;
+}
+
+const AssigningTokenModal: React.FC<AssigningTokenModalProps> = ({ status, error, scanProgress, onRetry }) => {
+    const statusInfo = {
+        scanning: {
+            icon: <Spinner />,
+            title: "Preparing Your Account",
+            message: scanProgress.total > 0
+                ? `Scanning for a secure connection... (Slot ${scanProgress.current}/${scanProgress.total})`
+                : 'Fetching available connection slots...',
+        },
+        assigning: {
+            icon: <Spinner />,
+            title: "Connection Found!",
+            message: "Finalizing assignment to your account. This won't take long.",
+        },
+        success: {
+            icon: <ShieldCheckIcon className="w-12 h-12 text-green-500 mx-auto" />,
+            title: "Assignment Complete!",
+            message: "Your secure connection is ready. Welcome to MONOklix Studio!",
+        },
+        error: {
+            icon: <AlertTriangleIcon className="w-12 h-12 text-red-500 mx-auto" />,
+            title: "Assignment Failed",
+            message: error || "An unexpected error occurred. Please try again.",
+        },
+    };
+
+    const currentStatusInfo = statusInfo[status];
+
+    return (
+        <div className="fixed inset-0 bg-black/70 flex flex-col items-center justify-center z-50 p-4 animate-zoomIn" aria-modal="true" role="dialog">
+            <div className="bg-white dark:bg-neutral-900 rounded-lg shadow-xl p-8 text-center max-w-sm w-full">
+                {currentStatusInfo.icon}
+                <h2 className="text-xl font-bold mt-4 text-neutral-800 dark:text-neutral-100">{currentStatusInfo.title}</h2>
+                <p className="text-neutral-500 dark:text-neutral-400 mt-2 text-sm">
+                    {currentStatusInfo.message}
+                </p>
+                {status === 'error' && (
+                    <button onClick={onRetry} className="mt-6 w-full bg-primary-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-primary-700 transition-colors">
+                        Try Again
+                    </button>
+                )}
+            </div>
+        </div>
+    );
+};
 
 const SERVERS = [
     'https://s1.monoklix.com',
@@ -226,6 +253,8 @@ const App: React.FC = () => {
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [showServerSelectionModal, setShowServerSelectionModal] = useState(false);
   const isAssigningTokenRef = useRef(false);
+  const [assigningStatus, setAssigningStatus] = useState<AssigningStatus>('scanning');
+  const [scanProgress, setScanProgress] = useState({ current: 0, total: 0 });
   const [autoAssignError, setAutoAssignError] = useState<string | null>(null);
   const [notification, setNotification] = useState<string | null>(null);
   
@@ -459,14 +488,15 @@ const App: React.FC = () => {
         }
         
         isAssigningTokenRef.current = true;
+        setAssigningStatus('scanning');
         
         console.log('Starting auto-assignment process...');
 
         const tokensJSON = sessionStorage.getItem('veoAuthTokens');
         if (!tokensJSON) {
             const errorMsg = "Sistem tidak dapat mencari sebarang token sambungan yang tersedia. Sila hubungi admin.";
-            console.log(errorMsg);
             isAssigningTokenRef.current = false;
+            setAssigningStatus('error');
             return { success: false, error: errorMsg };
         }
         
@@ -475,13 +505,16 @@ const App: React.FC = () => {
 
         try {
             const sharedTokens: { token: string; createdAt: string }[] = JSON.parse(tokensJSON);
+            setScanProgress({ current: 0, total: sharedTokens.length });
             
+            // Randomize for load distribution
             for (let i = sharedTokens.length - 1; i > 0; i--) {
                 const j = Math.floor(Math.random() * (i + 1));
                 [sharedTokens[i], sharedTokens[j]] = [sharedTokens[j], sharedTokens[i]];
             }
 
-            for (const tokenData of sharedTokens) {
+            for (const [index, tokenData] of sharedTokens.entries()) {
+                setScanProgress({ current: index + 1, total: sharedTokens.length });
                 console.log(`[Auto-Assign] Testing shared token... ${tokenData.token.slice(-6)}`);
                 const results = await runComprehensiveTokenTest(tokenData.token);
                 const isImagenOk = results.find(r => r.service === 'Imagen')?.success;
@@ -489,10 +522,12 @@ const App: React.FC = () => {
 
                 if (isImagenOk && isVeoOk) {
                     console.log(`[Auto-Assign] Found a valid token: ...${tokenData.token.slice(-6)}. Assigning to user.`);
+                    setAssigningStatus('assigning');
                     const assignResult = await assignPersonalTokenAndIncrementUsage(currentUser.id, tokenData.token);
 
                     if (assignResult.success === false) {
                         console.warn(`[Auto-Assign] Could not assign token ...${tokenData.token.slice(-6)}: ${assignResult.message}. Trying next.`);
+                        setAssigningStatus('scanning'); // Go back to scanning
                         if (assignResult.message === 'DB_SCHEMA_MISSING_COLUMN_personal_auth_token' && currentUser.role === 'admin') {
                             finalError = "Database schema is outdated.";
                             alert("Database schema is outdated.\n\nPlease go to your Supabase dashboard and run the following SQL command to add the required column:\n\nALTER TABLE public.users ADD COLUMN personal_auth_token TEXT;");
@@ -500,11 +535,16 @@ const App: React.FC = () => {
                         }
                     } else {
                         handleUserUpdate(assignResult.user);
-                        console.log('[Auto-Assign] Successfully assigned personal token and incremented usage count.');
+                        console.log('[Auto-Assign] Successfully assigned personal token.');
                         tokenAssigned = true;
                         finalError = null;
+                        setAssigningStatus('success');
                         break;
                     }
+                } else {
+                    console.warn(`[Auto-Assign] Token ...${tokenData.token.slice(-6)} failed health check. Marking as expired.`);
+                    // Fire-and-forget call to mark the token as expired
+                    updateTokenStatusToExpired(tokenData.token);
                 }
             }
 
@@ -519,15 +559,23 @@ const App: React.FC = () => {
             isAssigningTokenRef.current = false;
         }
         
+        if (!tokenAssigned) {
+            setAssigningStatus('error');
+        }
+
         return { success: tokenAssigned, error: finalError };
     }, [currentUser, handleUserUpdate]);
     
     const retryAssignment = useCallback(async () => {
+        setAssigningStatus('scanning');
         setAutoAssignError(null);
+        setScanProgress({ current: 0, total: 0 });
         const result = await assignTokenProcess();
         if (result.success) {
-            setShowAssignModal(false);
-            setJustLoggedIn(true);
+            setTimeout(() => {
+                setShowAssignModal(false);
+                setJustLoggedIn(true);
+            }, 1500); // Show success message for a bit
         } else if (result.error) {
             setAutoAssignError(result.error);
         }
@@ -747,11 +795,15 @@ To unlock this and all other advanced features, please upgrade to the full versi
             if (currentUser && !currentUser.personalAuthToken) {
                 // No token: show modal, run process, then trigger welcome animation.
                 setShowAssignModal(true);
+                setAssigningStatus('scanning');
                 setAutoAssignError(null);
+                setScanProgress({ current: 0, total: 0 });
                 const result = await assignTokenProcess();
                 if (result.success) {
-                    setShowAssignModal(false);
-                    setJustLoggedIn(true); 
+                    setTimeout(() => {
+                      setShowAssignModal(false);
+                      setJustLoggedIn(true); 
+                    }, 1500); // Show success message
                 } else {
                     setAutoAssignError(result.error);
                 }
@@ -762,7 +814,7 @@ To unlock this and all other advanced features, please upgrade to the full versi
           }}
         />
       )}
-      {showAssignModal && <AssigningTokenModal error={autoAssignError} onRetry={retryAssignment} />}
+      {showAssignModal && <AssigningTokenModal status={assigningStatus} error={autoAssignError} onRetry={retryAssignment} scanProgress={scanProgress} />}
       <Sidebar 
         activeView={activeView} 
         setActiveView={setActiveView} 
