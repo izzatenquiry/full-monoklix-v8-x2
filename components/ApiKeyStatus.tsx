@@ -4,6 +4,7 @@ import Spinner from './common/Spinner';
 import { runApiHealthCheck, type HealthCheckResult } from '../services/geminiService';
 import { type User } from '../types';
 import { saveUserPersonalAuthToken } from '../services/userService';
+import { runComprehensiveTokenTest, type TokenTestResult } from '../services/imagenV3Service';
 
 const ClaimTokenModal: React.FC<{
   status: 'searching' | 'success' | 'error';
@@ -103,17 +104,35 @@ const ApiKeyStatus: React.FC<ApiKeyStatusProps> = ({ activeApiKey, veoTokenRefre
     const handleHealthCheck = async () => {
         setIsChecking(true);
         setResults(null);
+        
+        const tokenToCheck = currentUser.personalAuthToken;
+
+        if (!tokenToCheck) {
+            setResults([
+                { service: 'Personal Token', model: 'N/A', status: 'degraded', message: 'No personal token assigned to this account.' }
+            ]);
+            setIsChecking(false);
+            return;
+        }
+
         try {
-            const checkResults = await runApiHealthCheck({
-                textKey: activeApiKey || undefined,
-            });
-            setResults(checkResults);
+            const testResults = await runComprehensiveTokenTest(tokenToCheck);
+            
+            const formattedResults: HealthCheckResult[] = testResults.map(res => ({
+                service: `${res.service} Service`,
+                model: `Personal Token (...${tokenToCheck.slice(-6)})`,
+                status: res.success ? 'operational' : 'error',
+                message: res.message
+            }));
+            
+            setResults(formattedResults);
         } catch (error) {
             setResults([{ service: 'Health Check Failed', model: 'N/A', status: 'error', message: error instanceof Error ? error.message : 'Unknown error' }]);
         } finally {
             setIsChecking(false);
         }
     };
+
 
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
