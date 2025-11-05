@@ -834,7 +834,11 @@ export const updateUserProxyServer = async (userId: string, serverUrl: string | 
  */
 export const updateTokenStatusToExpired = async (token: string): Promise<void> => {
     try {
-        const { error } = await supabase.rpc('mark_token_expired', { token_to_mark: token });
+        const { error } = await supabase
+            .from('auth_token')
+            .update({ status: 'expired' })
+            .eq('token', token);
+
         if (error) {
             console.error(`Failed to mark token ...${token.slice(-6)} as expired:`, getErrorMessage(error));
         } else {

@@ -285,13 +285,6 @@ export interface Database {
         };
         Returns: boolean;
       };
-      // FIX: Add missing RPC function definition for 'mark_token_expired'.
-      mark_token_expired: {
-        Args: {
-          token_to_mark: string;
-        };
-        Returns: void;
-      };
     }
     Enums: {
       user_role: 'admin' | 'user'

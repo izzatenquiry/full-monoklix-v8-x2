@@ -301,26 +301,6 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
-    const fetchAndSetTokens = async () => {
-      const tokensData = await getVeoAuthTokens();
-      if (tokensData && tokensData.length > 0) {
-        sessionStorage.setItem('veoAuthTokens', JSON.stringify(tokensData));
-        // For simple checks, also store the primary token separately
-        sessionStorage.setItem('veoAuthToken', tokensData[0].token);
-        sessionStorage.setItem('veoAuthTokenCreatedAt', tokensData[0].createdAt);
-        setVeoTokenRefreshedAt(new Date().toISOString());
-        console.log(`${tokensData.length} VEO Auth Tokens loaded from Supabase and set in session storage.`);
-      } else {
-        sessionStorage.removeItem('veoAuthTokens');
-        sessionStorage.removeItem('veoAuthToken');
-        sessionStorage.removeItem('veoAuthTokenCreatedAt');
-        console.warn("Could not fetch any VEO Auth Tokens from Supabase.");
-      }
-    };
-    fetchAndSetTokens();
-  }, []);
-
-  useEffect(() => {
     const loadSettings = async () => {
         const savedTheme = await loadData<string>('theme');
         if (savedTheme) setTheme(savedTheme);
@@ -392,19 +372,29 @@ const App: React.FC = () => {
     };
   }, [currentUser, handleUserUpdate]);
 
-  // Effect to fetch the master API key once a user is logged in.
+  // Effect to fetch session data (API keys, tokens) once a user is logged in.
   useEffect(() => {
-    const initializeApiKey = async () => {
+    const initializeSessionData = async () => {
       if (!currentUser?.id) {
+        // Clear all session-specific data on logout
         setActiveApiKey(null);
         sessionStorage.removeItem('monoklix_session_api_key');
+        sessionStorage.removeItem('veoAuthTokens');
+        sessionStorage.removeItem('veoAuthToken');
+        sessionStorage.removeItem('veoAuthTokenCreatedAt');
         setIsApiKeyLoading(false);
         return;
       }
 
       setIsApiKeyLoading(true);
       try {
-        const masterKey = await getSharedMasterApiKey();
+        // Fetch master key and VEO tokens in parallel for efficiency
+        const [masterKey, tokensData] = await Promise.all([
+          getSharedMasterApiKey(),
+          getVeoAuthTokens(),
+        ]);
+
+        // Handle Master API Key
         if (masterKey) {
           sessionStorage.setItem('monoklix_session_api_key', masterKey);
           setActiveApiKey(masterKey);
@@ -413,15 +403,32 @@ const App: React.FC = () => {
           console.error("CRITICAL: Could not fetch master API key from Supabase.");
           setActiveApiKey(null);
         }
+
+        // Handle VEO Auth Tokens
+        if (tokensData && tokensData.length > 0) {
+          sessionStorage.setItem('veoAuthTokens', JSON.stringify(tokensData));
+          sessionStorage.setItem('veoAuthToken', tokensData[0].token);
+          sessionStorage.setItem('veoAuthTokenCreatedAt', tokensData[0].createdAt);
+          setVeoTokenRefreshedAt(new Date().toISOString());
+          console.log(`${tokensData.length} VEO Auth Tokens loaded from Supabase and set in session storage.`);
+        } else {
+          sessionStorage.removeItem('veoAuthTokens');
+          sessionStorage.removeItem('veoAuthToken');
+          sessionStorage.removeItem('veoAuthTokenCreatedAt');
+          console.warn("Could not fetch any VEO Auth Tokens from Supabase.");
+        }
+
       } catch (error) {
-        console.error("Error fetching master API key:", error);
-        setActiveApiKey(null);
+        console.error("Error initializing session data (API key & VEO tokens):", error);
+        setActiveApiKey(null); // Ensure we're in a clean error state
       } finally {
         setIsApiKeyLoading(false);
       }
     };
-    initializeApiKey();
+
+    initializeSessionData();
   }, [currentUser?.id]);
+
 
   useEffect(() => {
     if (justLoggedIn) {
