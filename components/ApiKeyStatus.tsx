@@ -61,12 +61,11 @@ interface ApiKeyStatusProps {
     onUserUpdate: (user: User) => void;
 }
 
-const ApiKeyStatus: React.FC<ApiKeyStatusProps> = ({ activeApiKey, veoTokenRefreshedAt, currentUser, assignTokenProcess, onUserUpdate }) => {
+const ApiKeyStatus: React.FC<ApiKeyStatusProps> = ({ activeApiKey, currentUser, assignTokenProcess, onUserUpdate }) => {
     const [isPopoverOpen, setIsPopoverOpen] = useState(false);
     const [isChecking, setIsChecking] = useState(false);
     const [results, setResults] = useState<HealthCheckResult[] | null>(null);
     const popoverRef = useRef<HTMLDivElement>(null);
-    const [veoTokenCreatedAt, setVeoTokenCreatedAt] = useState<string | null>(null);
     const [claimStatus, setClaimStatus] = useState<'idle' | 'searching' | 'success' | 'error'>('idle');
     const [claimError, setClaimError] = useState<string | null>(null);
 
@@ -94,12 +93,6 @@ const ApiKeyStatus: React.FC<ApiKeyStatusProps> = ({ activeApiKey, veoTokenRefre
             }
         }
     }, [currentUser.id, onUserUpdate, assignTokenProcess]);
-
-    useEffect(() => {
-        // Read from sessionStorage whenever the refresh trigger changes
-        const createdAt = sessionStorage.getItem('veoAuthTokenCreatedAt');
-        setVeoTokenCreatedAt(createdAt);
-    }, [veoTokenRefreshedAt]);
 
     const handleHealthCheck = async () => {
         setIsChecking(true);
@@ -180,7 +173,7 @@ const ApiKeyStatus: React.FC<ApiKeyStatusProps> = ({ activeApiKey, veoTokenRefre
 
                     <div className="space-y-3 text-sm">
                         <div className="flex justify-between items-center p-2 bg-neutral-100 dark:bg-neutral-800 rounded-md">
-                            <span className="font-semibold text-neutral-600 dark:text-neutral-300">MONOklix API Key:</span>
+                            <span className="font-semibold text-neutral-600 dark:text-neutral-300">Shared API Key:</span>
                             {activeApiKey ? (
                                 <span className="font-mono text-green-600 dark:text-green-400">...{activeApiKey.slice(-4)}</span>
                             ) : (
@@ -188,11 +181,11 @@ const ApiKeyStatus: React.FC<ApiKeyStatusProps> = ({ activeApiKey, veoTokenRefre
                             )}
                         </div>
                          <div className="flex justify-between items-center p-2 bg-neutral-100 dark:bg-neutral-800 rounded-md">
-                            <span className="font-semibold text-neutral-600 dark:text-neutral-300">Veo 3 Auth Date:</span>
-                            {veoTokenCreatedAt ? (
-                                <span className="text-neutral-700 dark:text-neutral-300">{new Date(veoTokenCreatedAt).toLocaleDateString()}</span>
+                            <span className="font-semibold text-neutral-600 dark:text-neutral-300">MONOklix Auth Token:</span>
+                            {currentUser.personalAuthToken ? (
+                                <span className="font-mono text-neutral-700 dark:text-neutral-300">...{currentUser.personalAuthToken.slice(-10)}</span>
                             ) : (
-                                <span className="text-yellow-500 font-semibold">Not Loaded</span>
+                                <span className="text-yellow-500 font-semibold">Not Assigned</span>
                             )}
                         </div>
                     </div>
