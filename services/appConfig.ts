@@ -1,4 +1,4 @@
 /**
  * Centralized configuration for application-wide constants.
  */
-export const APP_VERSION = 'v8.x.0';
+export const APP_VERSION = 'v8.x.2';

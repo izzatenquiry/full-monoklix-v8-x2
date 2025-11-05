@@ -148,9 +148,9 @@ const ServerSelectionModal: React.FC<{ onSelect: (serverUrl: string) => void, cu
                 </div>
 
                 <div className="mt-6 space-y-3">
-                    {SERVERS.map(server => {
+                    {SERVERS.map((server, index) => {
                         const count = serverCounts[server];
-                        const serverName = new URL(server).hostname;
+                        const serverName = `Server ${index + 1}`;
                         const userCount = typeof count === 'number' ? count : 0;
                         
                         let colorClasses = 'bg-green-500';
