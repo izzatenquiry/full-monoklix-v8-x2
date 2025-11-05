@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { fetchWithTokenRotation, getImagenProxyUrl } from './apiClient';
+import { executeProxiedRequest, getImagenProxyUrl } from './apiClient';
 import { generateVideoWithVeo3 } from './veo3Service';
 
 // This map translates user-friendly aspect ratios to the API-specific enums.
@@ -50,7 +50,7 @@ export const uploadImageForImagen = async (base64Image: string, mimeType: string
   };
 
   const url = `${getProxyBaseUrl()}/upload`;
-  const { data } = await fetchWithTokenRotation(url, requestBody, 'IMAGEN UPLOAD', authToken, onStatusUpdate);
+  const { data } = await executeProxiedRequest(url, requestBody, 'IMAGEN UPLOAD', authToken, onStatusUpdate);
 
   const mediaId = 
     data.result?.data?.json?.result?.uploadMediaGenerationId || 
@@ -87,7 +87,7 @@ export const generateImageWithImagen = async (request: ImageGenerationRequest, o
   const url = `${getProxyBaseUrl()}/generate`;
   
   console.log(`🎨 [Imagen Service] Sending T2I request to API client.`);
-  const { data: result } = await fetchWithTokenRotation(url, requestBody, 'IMAGEN GENERATE', config.authToken, onStatusUpdate);
+  const { data: result } = await executeProxiedRequest(url, requestBody, 'IMAGEN GENERATE', config.authToken, onStatusUpdate);
   console.log(`🎨 [Imagen Service] Received T2I result with ${result.imagePanels?.length || 0} panels.`);
   return result;
 };
@@ -115,7 +115,7 @@ export const runImageRecipe = async (request: {
     };
 
     const url = `${getProxyBaseUrl()}/run-recipe`;
-    const { data: result } = await fetchWithTokenRotation(url, requestBody, 'IMAGEN RECIPE', config.authToken, onStatusUpdate);
+    const { data: result } = await executeProxiedRequest(url, requestBody, 'IMAGEN RECIPE', config.authToken, onStatusUpdate);
     console.log(`✏️ [Imagen Service] Received recipe result with ${result.imagePanels?.length || 0} panels.`);
     return result;
 };

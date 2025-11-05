@@ -59,7 +59,7 @@ const getCurrentUserInternal = (): User | null => {
 };
 
 
-export const fetchWithTokenRotation = async (
+export const executeProxiedRequest = async (
   endpoint: string,
   requestBody: any,
   logContext: string,
@@ -101,81 +101,58 @@ export const fetchWithTokenRotation = async (
   }
   // --- End Queueing Logic ---
 
-
-  let tokensToTry: { token: string; createdAt: string }[];
+  let tokenToUse: { token: string; createdAt: string; } | null = null;
+  let tokenIdentifier: string;
 
   if (specificToken) {
     console.log(`[API Client] Using specific token provided for ${logContext}`);
-    tokensToTry = [{ token: specificToken, createdAt: 'specific' }];
+    tokenIdentifier = 'Provided Token';
+    tokenToUse = { token: specificToken, createdAt: 'specific' };
   } else {
-    const personalToken = getPersonalToken();
-    if (personalToken) {
-        console.log(`[API Client] Using user's personal token for ${logContext}`);
-        tokensToTry = [personalToken];
-    } else {
+    tokenToUse = getPersonalToken();
+    tokenIdentifier = 'Personal Token';
+    if (!tokenToUse) {
         console.error(`[API Client] Aborting ${logContext}: No personal auth token found for the current user.`);
         throw new Error(`Personal Auth Token is required for ${logContext}, but none was found. Please re-login or check your account.`);
     }
+    console.log(`[API Client] Using user's personal token for ${logContext}`);
   }
 
-  if (tokensToTry.length === 0) {
-    console.error(`[API Client] Aborting ${logContext}: No auth tokens available after all checks.`);
-    throw new Error(`Auth Token is required for ${logContext}. Please set one in Settings.`);
-  }
+  if (onStatusUpdate) onStatusUpdate(`Attempting generation with ${tokenIdentifier}...`);
+  console.log(`[API Client] Attempting ${logContext} with ${tokenIdentifier} (...${tokenToUse.token.slice(-6)})`);
+  addLogEntry({ model: logContext, prompt: `Attempt with ${tokenIdentifier}`, output: `...${tokenToUse.token.slice(-6)}`, tokenCount: 0, status: "Success" });
 
-  let lastError: any = null;
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${tokenToUse.token}`,
+        'x-user-username': currentUser?.username || 'unknown',
+      },
+      body: JSON.stringify(requestBody),
+    });
 
-  // This loop will now only run once for normal app operations.
-  // It is kept to preserve the logic for handling a single attempt and for test cases that pass a specificToken.
-  for (let i = 0; i < tokensToTry.length; i++) {
-    const currentToken = tokensToTry[i];
-    const isPersonal = currentToken.createdAt === 'personal';
-    const tokenIdentifier = isPersonal ? 'Personal Token' : 'Provided Token';
-    
-    if (onStatusUpdate) onStatusUpdate(`Attempting generation with ${tokenIdentifier}...`);
-    console.log(`[API Client] Attempting ${logContext} with ${tokenIdentifier} (...${currentToken.token.slice(-6)})`);
-    addLogEntry({ model: logContext, prompt: `Attempt with ${tokenIdentifier}`, output: `...${currentToken.token.slice(-6)}`, tokenCount: 0, status: "Success" });
+    const data = await response.json();
+    console.log(`[API Client] Response for ${logContext} with ${tokenIdentifier}. Status: ${response.status}`);
 
-    try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${currentToken.token}`,
-          'x-user-username': currentUser?.username || 'unknown',
-        },
-        body: JSON.stringify(requestBody),
-      });
-
-      const data = await response.json();
-      console.log(`[API Client] Response for ${logContext} with ${tokenIdentifier}. Status: ${response.status}`);
-
-      if (!response.ok) {
-        const errorMessage = data.error?.message || data.message || `API call failed (${response.status})`;
-        throw new Error(errorMessage);
-      }
-      
-      console.log(`✅ [API Client] Success for ${logContext} with ${tokenIdentifier}`);
-      return { data, successfulToken: currentToken.token };
-
-    } catch (error) {
-      lastError = error;
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error(`❌ [API Client] ${tokenIdentifier} failed for ${logContext}:`, errorMessage);
-      addLogEntry({ model: logContext, prompt: `${tokenIdentifier} failed`, output: errorMessage, tokenCount: 0, status: 'Error', error: errorMessage });
-
-      if (isPersonal) {
-        eventBus.dispatch('personalTokenFailed');
-      }
-
-      // If it's a normal operation (not a specific token test), we don't retry, so we break here.
-      if (!specificToken) {
-        break;
-      }
+    if (!response.ok) {
+      const errorMessage = data.error?.message || data.message || `API call failed (${response.status})`;
+      throw new Error(errorMessage);
     }
-  }
+    
+    console.log(`✅ [API Client] Success for ${logContext} with ${tokenIdentifier}`);
+    return { data, successfulToken: tokenToUse.token };
 
-  console.error(`[API Client] All attempts failed for ${logContext}. Final error:`, lastError);
-  addLogEntry({ model: logContext, prompt: 'All available auth tokens failed.', output: `Final error: ${lastError.message}`, tokenCount: 0, status: 'Error', error: lastError.message });
-  throw lastError;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`❌ [API Client] ${tokenIdentifier} failed for ${logContext}:`, errorMessage);
+    addLogEntry({ model: logContext, prompt: `${tokenIdentifier} failed`, output: errorMessage, tokenCount: 0, status: 'Error', error: errorMessage });
+
+    if (tokenIdentifier === 'Personal Token') {
+      eventBus.dispatch('personalTokenFailed');
+    }
+    
+    throw error;
+  }
 };

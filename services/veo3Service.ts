@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { fetchWithTokenRotation, getVeoProxyUrl } from './apiClient';
+import { executeProxiedRequest, getVeoProxyUrl } from './apiClient';
 import { addLogEntry } from './aiLogService';
 
 interface Veo3Config {
@@ -70,8 +70,8 @@ export const generateVideoWithVeo3 = async (
   const endpoint = isImageToVideo ? '/generate-i2v' : '/generate-t2v';
   const url = `${getProxyBaseUrl()}${endpoint}`;
   
-  // Use fetchWithTokenRotation which now handles queuing
-  const { data, successfulToken } = await fetchWithTokenRotation(url, requestBody, isImageToVideo ? 'VEO I2V GENERATE' : 'VEO T2V GENERATE', config.authToken, onStatusUpdate);
+  // Use executeProxiedRequest which now handles queuing
+  const { data, successfulToken } = await executeProxiedRequest(url, requestBody, isImageToVideo ? 'VEO I2V GENERATE' : 'VEO T2V GENERATE', config.authToken, onStatusUpdate);
   console.log('🎬 [VEO Service] Received operations from API client:', data.operations?.length || 0);
   return { operations: data.operations || [], successfulToken };
 };
@@ -82,7 +82,7 @@ export const checkVideoStatus = async (operations: any[], token: string, onStatu
   const payload = { operations };
 
   // Use a direct fetch with the provided token, bypassing rotation.
-  const { data } = await fetchWithTokenRotation(url, payload, 'VEO STATUS', token, onStatusUpdate);
+  const { data } = await executeProxiedRequest(url, payload, 'VEO STATUS', token, onStatusUpdate);
   
   if (data.operations && data.operations.length > 0) {
     data.operations.forEach((op: any, idx: number) => {
@@ -124,7 +124,7 @@ export const uploadImageForVeo3 = async (
   };
 
   const url = `${getProxyBaseUrl()}/upload`;
-  const { data, successfulToken } = await fetchWithTokenRotation(url, requestBody, 'VEO UPLOAD', undefined, onStatusUpdate);
+  const { data, successfulToken } = await executeProxiedRequest(url, requestBody, 'VEO UPLOAD', undefined, onStatusUpdate);
   const mediaId = data.mediaGenerationId?.mediaGenerationId || data.mediaId;
   
   if (!mediaId) {
