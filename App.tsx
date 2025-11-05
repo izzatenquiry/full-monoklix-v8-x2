@@ -212,7 +212,7 @@ const ServerSelectionModal: React.FC<{ onSelect: (serverUrl: string) => void, cu
                                     <UsersIcon className="w-4 h-4" />
                                     {count === 'loading' ? <Spinner /> : (
                                         <span className={`font-bold text-base ${textColor}`}>
-                                            {count || 0} <span className="text-xs text-neutral-400">/ 25</span>
+                                            {count || 0} <span className="text-xs text-neutral-400">/ 10</span>
                                         </span>
                                     )}
                                 </div>
