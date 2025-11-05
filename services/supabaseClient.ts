@@ -48,7 +48,7 @@ export interface Database {
         }
         Relationships: []
       }
-      auth_token: {
+      token_new_active: {
         Row: {
           id: number
           created_at: string
@@ -256,18 +256,7 @@ export interface Database {
     }
     // FIX: Added 'token_new_active' view definition to resolve type errors in queries.
     Views: {
-      token_new_active: {
-        Row: {
-          token: string;
-          created_at: string;
-          total_user: number | null;
-          // FIX: Add status column to match the view's actual columns for filtering.
-          status: string | null;
-        };
-        Insert: {};
-        Update: {};
-        Relationships: [];
-      }
+      [_ in never]: never
     }
     // FIX: Added RPC function definition to resolve 'never' type errors in rpc calls.
     Functions: {
