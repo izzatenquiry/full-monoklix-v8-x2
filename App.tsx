@@ -155,11 +155,11 @@ const ServerSelectionModal: React.FC<{ onSelect: (serverUrl: string) => void, cu
                         
                         let colorClasses = 'bg-green-500';
                         let textColor = 'text-green-700 dark:text-green-300';
-                        if (userCount > 2) {
+                        if (userCount > 10) {
                             colorClasses = 'bg-yellow-500';
                             textColor = 'text-yellow-700 dark:text-yellow-300';
                         }
-                        if (userCount > 5) {
+                        if (userCount > 15) {
                             colorClasses = 'bg-red-500';
                             textColor = 'text-red-700 dark:text-red-300';
                         }
@@ -183,7 +183,11 @@ const ServerSelectionModal: React.FC<{ onSelect: (serverUrl: string) => void, cu
                                 </div>
                                 <div className="flex items-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
                                     <UsersIcon className="w-4 h-4" />
-                                    {count === 'loading' ? <Spinner /> : <span className={`font-bold text-base ${textColor}`}>{count || 0}</span>}
+                                    {count === 'loading' ? <Spinner /> : (
+                                        <span className={`font-bold text-base ${textColor}`}>
+                                            {count || 0} <span className="text-xs text-neutral-400">/ 25</span>
+                                        </span>
+                                    )}
                                 </div>
                             </label>
                         )
